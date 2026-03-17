@@ -582,10 +582,13 @@ class StepperConfig:
     def get_forcing_window_data_requirements(
         self, n_forward_steps: int
     ) -> DataRequirements:
+        names = list(
+            set(self.input_only_names).union(self.step.next_step_input_names)
+        )
+        if "air_temperature_0" not in names:
+            names.append("air_temperature_0")
         requirements = DataRequirements(
-            names=list(
-                set(self.input_only_names).union(self.step.next_step_input_names)
-            ),
+            names=names,
             n_timesteps=self._window_steps_required(n_forward_steps),
         )
         return self.derived_forcings.update_requirements(requirements)
@@ -1185,6 +1188,11 @@ class Stepper(
                     ),
                     wrapper=checkpoint,
                 )
+            
+            # Prescribe 'air_temperature_0' if available in forcing data
+            if "air_temperature_0" in forcing_dict:
+                state["air_temperature_0"] = forcing_dict["air_temperature_0"][:, step + 1]
+
             yield state
             state = optimizer.detach_if_using_gradient_accumulation(state)
 
@@ -1220,6 +1228,7 @@ class Stepper(
         forcing_names = set(self._input_only_names).union(
             self._step_obj.next_step_input_names
         )
+        forcing_names.add("air_temperature_0")
 
         if compute_derived_forcings:
             forcing = self._forcing_deriver(forcing)
