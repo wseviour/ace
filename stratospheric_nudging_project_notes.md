@@ -22,12 +22,36 @@ Below I will give a brief outline for setting up ACE2-ERA5 with stratospheric nu
 1. We have been using the `maths-gpu` server at Exeter. 
 1. Clone ACE2-ERA5 from https://huggingface.co/allenai/ACE2-ERA5 (you'll need something like `git-lfs` for this). 
 1. Fork and clone the ACE2 repo here: https://github.com/ai2cm/ace
-1. The `stepper_override` feature is capable of doing the nudging, but seems not to work on the current main branch of ACE2. Therefore we need to checkout this commit: [170e1b6194c6d9539e7be557dc421cd03ba1703c](https://github.com/ai2cm/ace/commit/170e1b6194c6d9539e7be557dc421cd03ba1703c). Install ace with `pip install -e`.
+1. The `stepper_override` feature is capable of doing the nudging, but seems not to work on the current main branch of ACE2. Therefore we need to checkout this commit: [170e1b6194c6d9539e7be557dc421cd03ba1703c](https://github.com/ai2cm/ace/commit/170e1b6194c6d9539e7be557dc421cd03ba1703c). You can also just use the branch that this guide is in!. Install ace with `pip install -e`.
 1. We next need to modify a forcing file so that it includes the `eastward_wind_0` variable from ERA5. An ERA5 dataset in the correct ACE2 format is available at `/disco/share/ws359/ERA5_for_ACE` and the standard forcing files (which contain variables like sea-surface temperature) are in the ACE2-ERA5 repo (in `forcing_data`). Assuming we are running for the year 2018, we'll need to take `eastward_wind_0` from 2018 in the ERA5 data and add it to the file `forcing_2018.nc`. I'd recommend that the new modified forcing data file be placed in a new directory (e.g. `mod_forcing_data`). 
 1. Next we need an initial condition file for ACE. A file for 2018-01-25 (the first initialisation in SNAPSI) is in: `/disco/share/ws359/ERA5_initial_conditions_for_ACE`
 1. We then need to modify the YAML file that controls ACE. Below is an example:
-
-
+```yaml
+experiment_dir: ./output_directory
+n_forward_steps: 400 
+forward_steps_in_memory: 50
+checkpoint_path: ./ace2_era5_ckpt.tar
+logging:
+  log_to_screen: true
+  log_to_wandb: false
+  log_to_file: true
+  project: ace
+initial_condition:
+  path: /disco/share/ws359/ERA5_initial_conditions_for_ACE/era5_ic_20180125T00_20180326T23_05deg.nc
+  start_indices:
+    times:
+      - "2018-01-25T00:00:00"
+forcing_loader:
+  dataset:
+    data_path: ./mod_forcing_data
+  num_data_workers: 4
+stepper_override:
+  prescribed_prognostic_names: ['eastward_wind_0']
+data_writer:
+  save_prediction_files: true
+  save_monthly_files: false
+  names: ['TMP2m', 'VGRD10m', 'PRATEsfc','air_temperature_0', 'air_temperature_1', 'air_temperature_2' , 'air_temperature_3', 'air_temperature_4', 'air_temperature_5', 'air_temperature_6', 'air_temperature_7', 'eastward_wind_0', 'eastward_wind_1']
+```
 1. Finally we should be able to run the inference with `python -m fme.ace.inference name_of_config_file.yaml`
 
 
