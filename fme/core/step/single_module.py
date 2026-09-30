@@ -465,7 +465,7 @@ def step_with_adjustments(
         prescribed_prognostic_names: Prognostic names to overwrite from
             next_step_input_data after the ocean step (e.g. for inference).
         nudged_prognostics: Prognostic names to blend with next_step_input_data
-            according to x * model_prediction + y * obs.
+            according to model_weight * model_prediction + reanalysis_weight * reanalysis.
 
     Returns:
         The denormalized output data at the next time step.
@@ -499,13 +499,16 @@ def step_with_adjustments(
             )
     for name, nudge in nudged_prognostics.items():
         if name in next_step_input_data:
-            obs = next_step_input_data[name]
-            if obs.dtype != output[name].dtype or obs.device != output[name].device:
-                obs = obs.to(device=output[name].device, dtype=output[name].dtype)
-            if obs.shape != output[name].shape:
-                obs = obs.expand_as(output[name])
-            assert nudge.x is not None and nudge.y is not None
-            blended = nudge.x * output[name] + nudge.y * obs
+            reanalysis = next_step_input_data[name]
+            if reanalysis.dtype != output[name].dtype or reanalysis.device != output[name].device:
+                reanalysis = reanalysis.to(device=output[name].device, dtype=output[name].dtype)
+            if reanalysis.shape != output[name].shape:
+                reanalysis = reanalysis.expand_as(output[name])
+            assert nudge.model_weight is not None and nudge.reanalysis_weight is not None
+            blended = (
+                nudge.model_weight * output[name]
+                + nudge.reanalysis_weight * reanalysis
+            )
             output = {**output, name: blended}
         else:
             raise ValueError(

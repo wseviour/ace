@@ -1,5 +1,6 @@
 import dataclasses
 import datetime
+import math
 import pathlib
 import tempfile
 import unittest
@@ -725,7 +726,7 @@ def test_step_with_nudged_prognostic_blends_output():
             ),
         ),
     )
-    nudge = NudgeConfig(x=0.4, y=0.6)
+    nudge = NudgeConfig(model_weight=0.4, reanalysis_weight=0.6)
     config_nudged = StepSelector(
         type="single_module",
         config=dataclasses.asdict(
@@ -777,78 +778,26 @@ def test_step_with_nudged_prognostic_blends_output():
     torch.testing.assert_close(output_nudged["diagnostic_main"], expected_blended)
 
 
+def test_nudge_config_aliases_and_timescale():
+    # Test model_weight and reanalysis_weight
+    cfg = NudgeConfig(model_weight=0.3, reanalysis_weight=0.7)
+    assert cfg.model_weight == 0.3
+    assert cfg.reanalysis_weight == 0.7
+    assert cfg.x == 0.3
+    assert cfg.y == 0.7
 
-def test_step_with_nudged_prognostic_blends_output():
-    normalization = get_network_and_loss_normalization_config(
-        names=["forcing_shared", "forcing_rad", "diagnostic_main", "diagnostic_rad"],
-    )
-    module_config = {
-        "scale_factor": 1,
-        "embed_dim": 4,
-        "num_layers": 2,
-    }
-    config_unforced = StepSelector(
-        type="single_module",
-        config=dataclasses.asdict(
-            SingleModuleStepConfig(
-                builder=ModuleSelector(
-                    type="SphericalFourierNeuralOperatorNet",
-                    config=module_config,
-                ),
-                in_names=["forcing_shared", "forcing_rad"],
-                out_names=["diagnostic_main", "diagnostic_rad"],
-                normalization=normalization,
-            ),
-        ),
-    )
-    nudge = NudgeConfig(x=0.4, y=0.6)
-    config_nudged = StepSelector(
-        type="single_module",
-        config=dataclasses.asdict(
-            SingleModuleStepConfig(
-                builder=ModuleSelector(
-                    type="SphericalFourierNeuralOperatorNet",
-                    config=module_config,
-                ),
-                in_names=["forcing_shared", "forcing_rad"],
-                out_names=["diagnostic_main", "diagnostic_rad"],
-                normalization=normalization,
-                nudged_prognostics={"diagnostic_main": nudge},
-            ),
-        ),
-    )
-    img_shape = DEFAULT_IMG_SHAPE
-    n_samples = 2
-    step_unforced = get_step(config_unforced, img_shape)
-    step_nudged = get_step(config_nudged, img_shape)
-    step_nudged._step_config_instance = config_nudged._step_config_instance
-    step_nudged.load_state(step_unforced.get_state())
+    # Test legacy aliases x and y
+    cfg_legacy = NudgeConfig(x=0.25, y=0.75)
+    assert cfg_legacy.model_weight == 0.25
+    assert cfg_legacy.reanalysis_weight == 0.75
+    assert cfg_legacy.x == 0.25
+    assert cfg_legacy.y == 0.75
 
-    input_data = get_tensor_dict(step_unforced.input_names, img_shape, n_samples)
-    next_step_input_data = get_tensor_dict(
-        step_nudged.next_step_input_names, img_shape, n_samples
-    )
-    obs_value = torch.full(
-        (n_samples,) + img_shape, 42.0, device=fme.get_device()
-    )
-    next_step_input_data["diagnostic_main"] = obs_value
-
-    output_unforced = step_unforced.step(
-        args=StepArgs(
-            input=input_data,
-            next_step_input_data={},
-            labels=None,
-        ),
-        wrapper=lambda x: x,
-    )
-    output_nudged = step_nudged.step(
-        args=StepArgs(
-            input=input_data,
-            next_step_input_data=next_step_input_data,
-            labels=None,
-        ),
-        wrapper=lambda x: x,
-    )
-    expected_blended = 0.4 * output_unforced["diagnostic_main"] + 0.6 * obs_value
-    torch.testing.assert_close(output_nudged["diagnostic_main"], expected_blended)
+    # Test timescale_hours
+    cfg_time = NudgeConfig(timescale_hours=24.0, timestep_hours=6.0)
+    expected_mw = math.exp(-6.0 / 24.0)
+    assert math.isclose(cfg_time.model_weight, expected_mw)
+    assert math.isclose(cfg_time.reanalysis_weight, 1.0 - expected_mw)
+    assert math.isclose(cfg_time.x, expected_mw)
+    assert math.isclose(cfg_time.y, 1.0 - expected_mw)
 

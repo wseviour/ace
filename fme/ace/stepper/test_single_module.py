@@ -1698,7 +1698,7 @@ def test_load_stepper_with_nudged_prognostic_override(
 
     stepper_unforced = load_stepper(stepper_path)
     stepper_override = StepperOverrideConfig(
-        nudged_prognostics={"var": NudgeConfig(x=0.5, y=0.5)}
+        nudged_prognostics={"var": NudgeConfig(model_weight=0.5, reanalysis_weight=0.5)}
     )
     stepper_nudged = load_stepper(stepper_path, stepper_override)
 
