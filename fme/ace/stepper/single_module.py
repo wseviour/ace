@@ -1783,6 +1783,8 @@ class StepperOverrideConfig:
             producing a serialized stepper.
         prescribed_prognostic_names: List of prognostic variable names to overwrite
             from forcing at each step during inference.
+        nudged_prognostics: Mapping of prognostic variable names to NudgeConfig
+            specifying model_weight and reanalysis_weight (or timescale) for blended nudging.
     """
 
     ocean: Literal["keep"] | OceanConfig | None = "keep"
