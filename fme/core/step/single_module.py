@@ -1,6 +1,7 @@
 import dataclasses
 import datetime
 import logging
+import math
 from collections.abc import Callable
 from typing import Any
 
@@ -33,6 +34,9 @@ DEFAULT_TIMESTEP = datetime.timedelta(hours=6)
 DEFAULT_ENCODED_TIMESTEP = encode_timestep(DEFAULT_TIMESTEP)
 
 
+from fme.core.step.nudge import NudgeConfig
+
+
 @StepSelector.register("single_module")
 @StepSelector.register("default")
 @dataclasses.dataclass
@@ -52,6 +56,8 @@ class SingleModuleStepConfig(StepConfigABC):
         next_step_forcing_names: Names of forcing variables for the next timestep.
         prescribed_prognostic_names: Prognostic variable names to overwrite from
             forcing data at each step (e.g. for inference with observed values).
+        nudged_prognostics: Mapping of prognostic variable names to NudgeConfig for
+            blended nudging with forcing/observation data.
         residual_prediction: Whether to use residual prediction.
     """
 
@@ -66,6 +72,7 @@ class SingleModuleStepConfig(StepConfigABC):
     )
     next_step_forcing_names: list[str] = dataclasses.field(default_factory=list)
     prescribed_prognostic_names: list[str] = dataclasses.field(default_factory=list)
+    nudged_prognostics: dict[str, NudgeConfig] = dataclasses.field(default_factory=dict)
     residual_prediction: bool = False
 
     def __post_init__(self):
@@ -74,6 +81,12 @@ class SingleModuleStepConfig(StepConfigABC):
             if name not in self.out_names:
                 raise ValueError(
                     f"prescribed_prognostic_name '{name}' must be in out_names: "
+                    f"{self.out_names}"
+                )
+        for name in self.nudged_prognostics:
+            if name not in self.out_names:
+                raise ValueError(
+                    f"nudged_prognostic '{name}' must be in out_names: "
                     f"{self.out_names}"
                 )
         for name in self.next_step_forcing_names:
@@ -166,6 +179,7 @@ class SingleModuleStepConfig(StepConfigABC):
         if self.ocean is not None:
             result = result.union(self.ocean.forcing_names)
         result = result.union(self.prescribed_prognostic_names)
+        result = result.union(self.nudged_prognostics.keys())
         return list(result)
 
     @property
@@ -193,6 +207,16 @@ class SingleModuleStepConfig(StepConfigABC):
                     f"{self.out_names}"
                 )
         self.prescribed_prognostic_names = names
+
+    def replace_nudged_prognostics(self, nudged: dict[str, NudgeConfig]) -> None:
+        """Replace nudged prognostics (e.g. when loading from checkpoint)."""
+        for name in nudged:
+            if name not in self.out_names:
+                raise ValueError(
+                    f"nudged_prognostic '{name}' must be in out_names: "
+                    f"{self.out_names}"
+                )
+        self.nudged_prognostics = nudged
 
     @classmethod
     def _remove_deprecated_keys(cls, state: dict[str, Any]) -> dict[str, Any]:
@@ -375,6 +399,7 @@ class SingleModuleStep(StepABC):
             residual_prediction=self._config.residual_prediction,
             prognostic_names=self.prognostic_names,
             prescribed_prognostic_names=self._config.prescribed_prognostic_names,
+            nudged_prognostics=self._config.nudged_prognostics,
         )
 
     def get_regularizer_loss(self):
@@ -417,6 +442,7 @@ def step_with_adjustments(
     residual_prediction: bool,
     prognostic_names: list[str],
     prescribed_prognostic_names: list[str] | None = None,
+    nudged_prognostics: dict[str, NudgeConfig] | None = None,
 ) -> TensorDict:
     """
     Step the model forward one timestep given input data.
@@ -438,12 +464,16 @@ def step_with_adjustments(
         prognostic_names: Names of prognostic variables.
         prescribed_prognostic_names: Prognostic names to overwrite from
             next_step_input_data after the ocean step (e.g. for inference).
+        nudged_prognostics: Prognostic names to blend with next_step_input_data
+            according to x * model_prediction + y * obs.
 
     Returns:
         The denormalized output data at the next time step.
     """
     if prescribed_prognostic_names is None:
         prescribed_prognostic_names = []
+    if nudged_prognostics is None:
+        nudged_prognostics = {}
     input_norm = normalizer.normalize(input)
     output_norm = network_calls(input_norm)
     if residual_prediction:
@@ -454,10 +484,31 @@ def step_with_adjustments(
     if ocean is not None:
         output = ocean(input, output, next_step_input_data)
     for name in prescribed_prognostic_names:
+        if name in nudged_prognostics:
+            continue
         if name in next_step_input_data:
-            output = {**output, name: next_step_input_data[name]}
+            obs = next_step_input_data[name]
+            if obs.dtype != output[name].dtype or obs.device != output[name].device:
+                obs = obs.to(device=output[name].device, dtype=output[name].dtype)
+            if obs.shape != output[name].shape:
+                obs = obs.expand_as(output[name])
+            output = {**output, name: obs}
         else:
             raise ValueError(
                 f"prescribed_prognostic_name '{name}' not in next_step_input_data"
+            )
+    for name, nudge in nudged_prognostics.items():
+        if name in next_step_input_data:
+            obs = next_step_input_data[name]
+            if obs.dtype != output[name].dtype or obs.device != output[name].device:
+                obs = obs.to(device=output[name].device, dtype=output[name].dtype)
+            if obs.shape != output[name].shape:
+                obs = obs.expand_as(output[name])
+            assert nudge.x is not None and nudge.y is not None
+            blended = nudge.x * output[name] + nudge.y * obs
+            output = {**output, name: blended}
+        else:
+            raise ValueError(
+                f"nudged_prognostic '{name}' not in next_step_input_data"
             )
     return output

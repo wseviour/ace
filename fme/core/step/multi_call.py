@@ -11,6 +11,7 @@ from fme.core.normalizer import StandardNormalizer
 from fme.core.ocean import OceanConfig
 from fme.core.step._multi_call import MultiCall, MultiCallConfig, StepMethod
 from fme.core.step.args import StepArgs
+from fme.core.step.nudge import NudgeConfig
 from fme.core.step.step import StepABC, StepConfigABC, StepSelector
 from fme.core.typing_ import TensorDict, TensorMapping
 
@@ -196,6 +197,9 @@ class MultiCallStepConfig(StepConfigABC):
 
     def replace_prescribed_prognostic_names(self, names: list[str]) -> None:
         self.wrapped_step.replace_prescribed_prognostic_names(names)
+
+    def replace_nudged_prognostics(self, nudged: dict[str, NudgeConfig]) -> None:
+        self.wrapped_step.replace_nudged_prognostics(nudged)
 
     def replace_multi_call(self, multi_call: MultiCallConfig | None):
         self.config = multi_call

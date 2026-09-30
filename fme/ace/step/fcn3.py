@@ -23,6 +23,7 @@ from fme.core.optimization import NullOptimization
 from fme.core.packer import Packer
 from fme.core.registry import CorrectorSelector
 from fme.core.step.args import StepArgs
+from fme.core.step.nudge import NudgeConfig
 from fme.core.step.single_module import step_with_adjustments
 from fme.core.step.step import StepABC, StepConfigABC, StepSelector
 from fme.core.typing_ import TensorDict, TensorMapping
@@ -174,6 +175,7 @@ class FCN3StepConfig(StepConfigABC):
     )
     next_step_forcing_names: list[str] = dataclasses.field(default_factory=list)
     prescribed_prognostic_names: list[str] = dataclasses.field(default_factory=list)
+    nudged_prognostics: dict[str, NudgeConfig] = dataclasses.field(default_factory=dict)
     residual_prediction: bool = False
 
     def __post_init__(self):
@@ -208,6 +210,12 @@ class FCN3StepConfig(StepConfigABC):
             if name not in self.out_names:
                 raise ValueError(
                     f"prescribed_prognostic_name '{name}' must be in out_names: "
+                    f"{self.out_names}"
+                )
+        for name in self.nudged_prognostics:
+            if name not in self.out_names:
+                raise ValueError(
+                    f"nudged_prognostic '{name}' must be in out_names: "
                     f"{self.out_names}"
                 )
 
@@ -275,6 +283,7 @@ class FCN3StepConfig(StepConfigABC):
         if self.ocean is not None:
             result = result.union(self.ocean.forcing_names)
         result = result.union(self.prescribed_prognostic_names)
+        result = result.union(self.nudged_prognostics.keys())
         return list(result)
 
     @property
@@ -302,6 +311,16 @@ class FCN3StepConfig(StepConfigABC):
                     f"{self.out_names}"
                 )
         self.prescribed_prognostic_names = names
+
+    def replace_nudged_prognostics(self, nudged: dict[str, NudgeConfig]) -> None:
+        """Replace nudged prognostics (e.g. when loading from checkpoint)."""
+        for name in nudged:
+            if name not in self.out_names:
+                raise ValueError(
+                    f"nudged_prognostic '{name}' must be in out_names: "
+                    f"{self.out_names}"
+                )
+        self.nudged_prognostics = nudged
 
     @classmethod
     def _remove_deprecated_keys(cls, state: dict[str, Any]) -> dict[str, Any]:
@@ -489,6 +508,7 @@ class FCN3Step(StepABC):
             residual_prediction=self._config.residual_prediction,
             prognostic_names=self.prognostic_names,
             prescribed_prognostic_names=self._config.prescribed_prognostic_names,
+            nudged_prognostics=self._config.nudged_prognostics,
         )
 
     def get_regularizer_loss(self):

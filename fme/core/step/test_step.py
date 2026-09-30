@@ -25,7 +25,7 @@ from fme.core.registry import ModuleSelector
 from fme.core.step.args import StepArgs
 from fme.core.step.multi_call import MultiCallConfig, MultiCallStepConfig
 from fme.core.step.secondary_decoder import SecondaryDecoderConfig
-from fme.core.step.single_module import SingleModuleStepConfig
+from fme.core.step.single_module import NudgeConfig, SingleModuleStepConfig
 from fme.core.step.step import StepABC, StepSelector
 from fme.core.typing_ import TensorDict
 
@@ -700,3 +700,155 @@ def test_step_with_prescribed_prognostic_overwrites_output():
         wrapper=lambda x: x,
     )
     torch.testing.assert_close(output["diagnostic_main"], prescribed_value)
+
+
+def test_step_with_nudged_prognostic_blends_output():
+    normalization = get_network_and_loss_normalization_config(
+        names=["forcing_shared", "forcing_rad", "diagnostic_main", "diagnostic_rad"],
+    )
+    module_config = {
+        "scale_factor": 1,
+        "embed_dim": 4,
+        "num_layers": 2,
+    }
+    config_unforced = StepSelector(
+        type="single_module",
+        config=dataclasses.asdict(
+            SingleModuleStepConfig(
+                builder=ModuleSelector(
+                    type="SphericalFourierNeuralOperatorNet",
+                    config=module_config,
+                ),
+                in_names=["forcing_shared", "forcing_rad"],
+                out_names=["diagnostic_main", "diagnostic_rad"],
+                normalization=normalization,
+            ),
+        ),
+    )
+    nudge = NudgeConfig(x=0.4, y=0.6)
+    config_nudged = StepSelector(
+        type="single_module",
+        config=dataclasses.asdict(
+            SingleModuleStepConfig(
+                builder=ModuleSelector(
+                    type="SphericalFourierNeuralOperatorNet",
+                    config=module_config,
+                ),
+                in_names=["forcing_shared", "forcing_rad"],
+                out_names=["diagnostic_main", "diagnostic_rad"],
+                normalization=normalization,
+                nudged_prognostics={"diagnostic_main": nudge},
+            ),
+        ),
+    )
+    img_shape = DEFAULT_IMG_SHAPE
+    n_samples = 2
+    step_unforced = get_step(config_unforced, img_shape)
+    step_nudged = get_step(config_nudged, img_shape)
+    step_nudged._step_config_instance = config_nudged._step_config_instance
+    step_nudged.load_state(step_unforced.get_state())
+
+    input_data = get_tensor_dict(step_unforced.input_names, img_shape, n_samples)
+    next_step_input_data = get_tensor_dict(
+        step_nudged.next_step_input_names, img_shape, n_samples
+    )
+    obs_value = torch.full(
+        (n_samples,) + img_shape, 42.0, device=fme.get_device()
+    )
+    next_step_input_data["diagnostic_main"] = obs_value
+
+    output_unforced = step_unforced.step(
+        args=StepArgs(
+            input=input_data,
+            next_step_input_data={},
+            labels=None,
+        ),
+        wrapper=lambda x: x,
+    )
+    output_nudged = step_nudged.step(
+        args=StepArgs(
+            input=input_data,
+            next_step_input_data=next_step_input_data,
+            labels=None,
+        ),
+        wrapper=lambda x: x,
+    )
+    expected_blended = 0.4 * output_unforced["diagnostic_main"] + 0.6 * obs_value
+    torch.testing.assert_close(output_nudged["diagnostic_main"], expected_blended)
+
+
+
+def test_step_with_nudged_prognostic_blends_output():
+    normalization = get_network_and_loss_normalization_config(
+        names=["forcing_shared", "forcing_rad", "diagnostic_main", "diagnostic_rad"],
+    )
+    module_config = {
+        "scale_factor": 1,
+        "embed_dim": 4,
+        "num_layers": 2,
+    }
+    config_unforced = StepSelector(
+        type="single_module",
+        config=dataclasses.asdict(
+            SingleModuleStepConfig(
+                builder=ModuleSelector(
+                    type="SphericalFourierNeuralOperatorNet",
+                    config=module_config,
+                ),
+                in_names=["forcing_shared", "forcing_rad"],
+                out_names=["diagnostic_main", "diagnostic_rad"],
+                normalization=normalization,
+            ),
+        ),
+    )
+    nudge = NudgeConfig(x=0.4, y=0.6)
+    config_nudged = StepSelector(
+        type="single_module",
+        config=dataclasses.asdict(
+            SingleModuleStepConfig(
+                builder=ModuleSelector(
+                    type="SphericalFourierNeuralOperatorNet",
+                    config=module_config,
+                ),
+                in_names=["forcing_shared", "forcing_rad"],
+                out_names=["diagnostic_main", "diagnostic_rad"],
+                normalization=normalization,
+                nudged_prognostics={"diagnostic_main": nudge},
+            ),
+        ),
+    )
+    img_shape = DEFAULT_IMG_SHAPE
+    n_samples = 2
+    step_unforced = get_step(config_unforced, img_shape)
+    step_nudged = get_step(config_nudged, img_shape)
+    step_nudged._step_config_instance = config_nudged._step_config_instance
+    step_nudged.load_state(step_unforced.get_state())
+
+    input_data = get_tensor_dict(step_unforced.input_names, img_shape, n_samples)
+    next_step_input_data = get_tensor_dict(
+        step_nudged.next_step_input_names, img_shape, n_samples
+    )
+    obs_value = torch.full(
+        (n_samples,) + img_shape, 42.0, device=fme.get_device()
+    )
+    next_step_input_data["diagnostic_main"] = obs_value
+
+    output_unforced = step_unforced.step(
+        args=StepArgs(
+            input=input_data,
+            next_step_input_data={},
+            labels=None,
+        ),
+        wrapper=lambda x: x,
+    )
+    output_nudged = step_nudged.step(
+        args=StepArgs(
+            input=input_data,
+            next_step_input_data=next_step_input_data,
+            labels=None,
+        ),
+        wrapper=lambda x: x,
+    )
+    expected_blended = 0.4 * output_unforced["diagnostic_main"] + 0.6 * obs_value
+    torch.testing.assert_close(output_nudged["diagnostic_main"], expected_blended)
+

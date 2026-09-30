@@ -59,6 +59,7 @@ from fme.core.step.multi_call import (
     MultiCallStepConfig,
     replace_multi_call,
 )
+from fme.core.step.nudge import NudgeConfig
 from fme.core.step.single_module import SingleModuleStepConfig
 from fme.core.step.step import StepABC, StepSelector
 from fme.core.tensors import (
@@ -126,6 +127,7 @@ class SingleModuleStepperConfig:
     )
     next_step_forcing_names: list[str] = dataclasses.field(default_factory=list)
     prescribed_prognostic_names: list[str] = dataclasses.field(default_factory=list)
+    nudged_prognostics: dict[str, NudgeConfig] = dataclasses.field(default_factory=dict)
     loss_normalization: NormalizationConfig | None = None
     residual_normalization: NormalizationConfig | None = None
     multi_call: MultiCallConfig | None = None
@@ -137,6 +139,12 @@ class SingleModuleStepperConfig:
             if name not in self.out_names:
                 raise ValueError(
                     f"prescribed_prognostic_name '{name}' must be in out_names: "
+                    f"{self.out_names}"
+                )
+        for name in self.nudged_prognostics:
+            if name not in self.out_names:
+                raise ValueError(
+                    f"nudged_prognostic '{name}' must be in out_names: "
                     f"{self.out_names}"
                 )
         for name in self.next_step_forcing_names:
@@ -310,6 +318,7 @@ class SingleModuleStepperConfig:
             corrector=self.corrector,
             next_step_forcing_names=self.next_step_forcing_names,
             prescribed_prognostic_names=self.prescribed_prognostic_names,
+            nudged_prognostics=self.nudged_prognostics,
             residual_prediction=self.residual_prediction,
         )
 
@@ -732,6 +741,13 @@ class StepperConfig:
         """
         self.step.replace_prescribed_prognostic_names(names)
 
+    def replace_nudged_prognostics(self, nudged: dict[str, NudgeConfig]) -> None:
+        """Replace nudged prognostics (e.g. when loading from checkpoint).
+
+        Used for inference / evaluation to configure nudged prognostics.
+        """
+        self.step.replace_nudged_prognostics(nudged)
+
     def replace_multi_call(
         self, multi_call: MultiCallConfig | None, state: dict[str, Any]
     ) -> dict[str, Any]:
@@ -986,6 +1002,21 @@ class Stepper:
             names: The new list of prescribed prognostic variable names.
         """
         self._config.replace_prescribed_prognostic_names(names)
+        new_stepper: Stepper = self._config.get_stepper(
+            dataset_info=self._dataset_info,
+            apply_parameter_init=False,
+        )
+        new_stepper._step_obj.load_state(self._step_obj.get_state())
+        self._step_obj = new_stepper._step_obj
+
+    def replace_nudged_prognostics(self, nudged: dict[str, NudgeConfig]) -> None:
+        """
+        Replace nudged prognostics configuration (e.g. when loading from checkpoint).
+
+        Args:
+            nudged: Mapping from variable name to NudgeConfig.
+        """
+        self._config.replace_nudged_prognostics(nudged)
         new_stepper: Stepper = self._config.get_stepper(
             dataset_info=self._dataset_info,
             apply_parameter_init=False,
@@ -1758,6 +1789,7 @@ class StepperOverrideConfig:
     multi_call: Literal["keep"] | MultiCallConfig | None = "keep"
     derived_forcings: Literal["keep"] | DerivedForcingsConfig = "keep"
     prescribed_prognostic_names: Literal["keep"] | list[str] = "keep"
+    nudged_prognostics: Literal["keep"] | dict[str, NudgeConfig] = "keep"
 
 
 def load_stepper_config(
@@ -1799,6 +1831,9 @@ def load_stepper(
         checkpoint_path, map_location=get_device(), weights_only=False
     )
     stepper = Stepper.from_state(checkpoint["stepper"])
+    del checkpoint
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     if override_config.ocean != "keep":
         logging.info(
@@ -1827,5 +1862,14 @@ def load_stepper(
         )
         stepper.replace_prescribed_prognostic_names(
             override_config.prescribed_prognostic_names
+        )
+
+    if override_config.nudged_prognostics != "keep":
+        logging.info(
+            "Overriding nudged_prognostics with %s.",
+            override_config.nudged_prognostics,
+        )
+        stepper.replace_nudged_prognostics(
+            override_config.nudged_prognostics
         )
     return stepper

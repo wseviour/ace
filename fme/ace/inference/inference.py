@@ -361,6 +361,8 @@ def run_inference_from_config(config: InferenceConfig):
             coords=data.coords,
             variable_metadata=variable_metadata,
         )
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     logging.info("Starting inference")
     record_logs = get_record_to_wandb(label="inference")
     run_inference(

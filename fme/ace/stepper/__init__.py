@@ -1,5 +1,6 @@
 from .derived_forcings import DerivedForcingsConfig, ForcingDeriver
 from .single_module import (
+    NudgeConfig,
     Stepper,
     StepperConfig,
     StepperOverrideConfig,
@@ -11,3 +12,4 @@ from .single_module import (
     process_prediction_generator_list,
     stack_list_of_tensor_dicts,
 )
+

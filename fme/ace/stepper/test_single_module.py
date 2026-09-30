@@ -31,6 +31,7 @@ from fme.ace.stepper.insolation.config import InsolationConfig, NameConfig, Valu
 from fme.ace.stepper.single_module import (
     AtmosphereCorrectorConfig,
     EpochNotProvidedError,
+    NudgeConfig,
     SingleModuleStepperConfig,
     Stepper,
     StepperConfig,
@@ -1669,6 +1670,68 @@ def test_load_stepper_with_prescribed_prognostic_override(
     output, _ = stepper.predict(input_data, forcing_data)
     expected_var = forcing_data.data["var"][:, 1 : n_steps + 1]
     torch.testing.assert_close(output.data["var"], expected_var)
+
+
+def test_load_stepper_with_nudged_prognostic_override(
+    tmp_path: pathlib.Path, very_fast_only: bool
+):
+    if very_fast_only:
+        pytest.skip("Skipping non-fast tests")
+    in_names = ["co2", "var", "a", "b"]
+    out_names = ["var", "a"]
+    stepper_path = tmp_path / "stepper"
+    horizontal = [DimSize("grid_yt", 4), DimSize("grid_xt", 8)]
+    dim_sizes = DimSizes(
+        n_time=9,
+        horizontal=horizontal,
+        nz_interface=4,
+    )
+    save_plus_one_stepper(
+        stepper_path,
+        in_names,
+        out_names,
+        normalization_names=set(in_names + out_names),
+        mean=0.0,
+        std=1.0,
+        data_shape=dim_sizes.shape_nd,
+    )
+
+    stepper_unforced = load_stepper(stepper_path)
+    stepper_override = StepperOverrideConfig(
+        nudged_prognostics={"var": NudgeConfig(x=0.5, y=0.5)}
+    )
+    stepper_nudged = load_stepper(stepper_path, stepper_override)
+
+    n_steps = 1
+    n_samples = 3
+    index = xr.date_range("2000", freq="6h", periods=n_steps + 1, use_cftime=True)
+    forcing_time = xr.DataArray(np.stack(n_samples * [index]), dims=["sample", "time"])
+    input_time = forcing_time.isel(time=[0])
+    input_data = BatchData.new_on_device(
+        data={
+            "var": torch.rand(n_samples, 1, 4, 8).to(DEVICE),
+            "a": torch.rand(n_samples, 1, 4, 8).to(DEVICE),
+        },
+        time=input_time,
+        labels=None,
+    ).get_start(prognostic_names=["var", "a"], n_ic_timesteps=1)
+    forcing_data = BatchData.new_on_device(
+        data={
+            name: torch.rand(3, n_steps + 1, 4, 8).to(DEVICE)
+            for name in ["co2", "var", "a", "b"]
+        },
+        time=forcing_time,
+        labels=None,
+    )
+    unforced_output, _ = stepper_unforced.predict(input_data, forcing_data)
+    nudged_output, _ = stepper_nudged.predict(input_data, forcing_data)
+
+    expected_var = (
+        0.5 * unforced_output.data["var"]
+        + 0.5 * forcing_data.data["var"][:, 1 : n_steps + 1]
+    )
+    torch.testing.assert_close(nudged_output.data["var"], expected_var)
+
 
 
 def get_regression_stepper_and_data(

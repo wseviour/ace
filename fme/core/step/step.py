@@ -14,6 +14,7 @@ from fme.core.normalizer import StandardNormalizer
 from fme.core.ocean import OceanConfig
 from fme.core.registry.registry import Registry
 from fme.core.step.args import StepArgs
+from fme.core.step.nudge import NudgeConfig
 from fme.core.typing_ import TensorDict, TensorMapping
 
 
@@ -110,6 +111,10 @@ class StepConfigABC(abc.ABC):
 
     def replace_prescribed_prognostic_names(self, names: list[str]) -> None:
         """Replace prescribed prognostic names (e.g. when loading from checkpoint)."""
+        pass
+
+    def replace_nudged_prognostics(self, nudged: dict[str, NudgeConfig]) -> None:
+        """Replace nudged prognostics (e.g. when loading from checkpoint)."""
         pass
 
     @abc.abstractmethod
@@ -217,6 +222,10 @@ class StepSelector(StepConfigABC):
 
     def replace_prescribed_prognostic_names(self, names: list[str]) -> None:
         self._step_config_instance.replace_prescribed_prognostic_names(names)
+        self.config = dataclasses.asdict(self._step_config_instance)
+
+    def replace_nudged_prognostics(self, nudged: dict[str, NudgeConfig]) -> None:
+        self._step_config_instance.replace_nudged_prognostics(nudged)
         self.config = dataclasses.asdict(self._step_config_instance)
 
     def load(self):
