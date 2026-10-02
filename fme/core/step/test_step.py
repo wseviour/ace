@@ -778,26 +778,20 @@ def test_step_with_nudged_prognostic_blends_output():
     torch.testing.assert_close(output_nudged["diagnostic_main"], expected_blended)
 
 
-def test_nudge_config_aliases_and_timescale():
+def test_nudge_config_weights_and_timescale():
     # Test model_weight and reanalysis_weight
     cfg = NudgeConfig(model_weight=0.3, reanalysis_weight=0.7)
     assert cfg.model_weight == 0.3
     assert cfg.reanalysis_weight == 0.7
-    assert cfg.x == 0.3
-    assert cfg.y == 0.7
-
-    # Test legacy aliases x and y
-    cfg_legacy = NudgeConfig(x=0.25, y=0.75)
-    assert cfg_legacy.model_weight == 0.25
-    assert cfg_legacy.reanalysis_weight == 0.75
-    assert cfg_legacy.x == 0.25
-    assert cfg_legacy.y == 0.75
 
     # Test timescale_hours
     cfg_time = NudgeConfig(timescale_hours=24.0, timestep_hours=6.0)
     expected_mw = math.exp(-6.0 / 24.0)
     assert math.isclose(cfg_time.model_weight, expected_mw)
     assert math.isclose(cfg_time.reanalysis_weight, 1.0 - expected_mw)
-    assert math.isclose(cfg_time.x, expected_mw)
-    assert math.isclose(cfg_time.y, 1.0 - expected_mw)
+
+    # Test timescale_days
+    cfg_days = NudgeConfig(timescale_days=1.0, timestep_hours=6.0)
+    assert math.isclose(cfg_days.model_weight, expected_mw)
+    assert math.isclose(cfg_days.reanalysis_weight, 1.0 - expected_mw)
 
