@@ -505,10 +505,20 @@ def step_with_adjustments(
             if reanalysis.shape != output[name].shape:
                 reanalysis = reanalysis.expand_as(output[name])
             assert nudge.model_weight is not None and nudge.reanalysis_weight is not None
-            blended = (
-                nudge.model_weight * output[name]
-                + nudge.reanalysis_weight * reanalysis
-            )
+            if nudge.zonal_mean:
+                # Zonal mean nudging: identical increment at all longitudes
+                # delta(lat) = - reanalysis_weight * (<output> - <reanalysis>)
+                # blended = output + delta(lat)
+                # Eddies (u - <u>) are completely preserved.
+                output_zm = output[name].mean(dim=-1, keepdim=True)
+                reanalysis_zm = reanalysis.mean(dim=-1, keepdim=True)
+                delta_zm = -nudge.reanalysis_weight * (output_zm - reanalysis_zm)
+                blended = output[name] + delta_zm
+            else:
+                blended = (
+                    nudge.model_weight * output[name]
+                    + nudge.reanalysis_weight * reanalysis
+                )
             output = {**output, name: blended}
         else:
             raise ValueError(

@@ -20,6 +20,10 @@ class NudgeConfig:
         timescale_days: Effective nudging timescale tau in days.
             Computes timescale_hours = timescale_days * 24.
         timestep_hours: Model timestep in hours (default: 6.0).
+        zonal_mean: If True, apply nudging towards the zonal mean of reanalysis,
+            with the same correction applied across all longitudes:
+            du/dt = model_prediction - (1/tau) * (<model> - <reanalysis>).
+            Eddies (u - <u>) are completely preserved. Default is False (gridpoint nudging).
     """
 
     model_weight: float | None = None
@@ -27,6 +31,7 @@ class NudgeConfig:
     timescale_hours: float | None = None
     timescale_days: float | None = None
     timestep_hours: float = 6.0
+    zonal_mean: bool = False
 
     def __post_init__(self):
         if self.timescale_days is not None:

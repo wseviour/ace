@@ -795,3 +795,100 @@ def test_nudge_config_weights_and_timescale():
     assert math.isclose(cfg_days.model_weight, expected_mw)
     assert math.isclose(cfg_days.reanalysis_weight, 1.0 - expected_mw)
 
+    # Test zonal_mean default and flag
+    assert cfg.zonal_mean is False
+    cfg_zm = NudgeConfig(timescale_hours=8.0, zonal_mean=True)
+    assert cfg_zm.zonal_mean is True
+
+
+def test_step_zonal_mean_nudging_eddy_preservation():
+    normalization = get_network_and_loss_normalization_config(
+        names=["forcing_shared", "forcing_rad", "diagnostic_main", "diagnostic_rad"],
+    )
+    module_config = {
+        "scale_factor": 1,
+        "embed_dim": 4,
+        "num_layers": 2,
+    }
+    config_unforced = StepSelector(
+        type="single_module",
+        config=dataclasses.asdict(
+            SingleModuleStepConfig(
+                builder=ModuleSelector(
+                    type="SphericalFourierNeuralOperatorNet",
+                    config=module_config,
+                ),
+                in_names=["forcing_shared", "forcing_rad"],
+                out_names=["diagnostic_main", "diagnostic_rad"],
+                normalization=normalization,
+            ),
+        ),
+    )
+    nudge_zm = NudgeConfig(model_weight=0.4, reanalysis_weight=0.6, zonal_mean=True)
+    config_nudged = StepSelector(
+        type="single_module",
+        config=dataclasses.asdict(
+            SingleModuleStepConfig(
+                builder=ModuleSelector(
+                    type="SphericalFourierNeuralOperatorNet",
+                    config=module_config,
+                ),
+                in_names=["forcing_shared", "forcing_rad"],
+                out_names=["diagnostic_main", "diagnostic_rad"],
+                normalization=normalization,
+                nudged_prognostics={"diagnostic_main": nudge_zm},
+            ),
+        ),
+    )
+    img_shape = DEFAULT_IMG_SHAPE
+    n_samples = 2
+    step_unforced = get_step(config_unforced, img_shape)
+    step_nudged = get_step(config_nudged, img_shape)
+    step_nudged._step_config_instance = config_nudged._step_config_instance
+    step_nudged.load_state(step_unforced.get_state())
+
+    input_data = get_tensor_dict(step_unforced.input_names, img_shape, n_samples)
+    next_step_input_data = get_tensor_dict(
+        step_nudged.next_step_input_names, img_shape, n_samples
+    )
+    # Create non-uniform observation tensor with waves across longitude (dim=-1)
+    n_lat, n_lon = img_shape
+    lon_wave = torch.sin(torch.linspace(0, 4 * math.pi, n_lon, device=fme.get_device()))
+    obs_value = 30.0 + 10.0 * lon_wave.unsqueeze(0).unsqueeze(0).expand(n_samples, n_lat, n_lon)
+    next_step_input_data["diagnostic_main"] = obs_value
+
+    output_unforced = step_unforced.step(
+        args=StepArgs(
+            input=input_data,
+            next_step_input_data={},
+            labels=None,
+        ),
+        wrapper=lambda x: x,
+    )
+    output_nudged = step_nudged.step(
+        args=StepArgs(
+            input=input_data,
+            next_step_input_data=next_step_input_data,
+            labels=None,
+        ),
+        wrapper=lambda x: x,
+    )
+
+    # 1. Zonal mean should be blended according to weights
+    zm_unforced = output_unforced["diagnostic_main"].mean(dim=-1, keepdim=True)
+    zm_obs = obs_value.mean(dim=-1, keepdim=True)
+    expected_zm = 0.4 * zm_unforced + 0.6 * zm_obs
+    actual_zm = output_nudged["diagnostic_main"].mean(dim=-1, keepdim=True)
+    torch.testing.assert_close(actual_zm, expected_zm)
+
+    # 2. Eddy field (u - <u>) MUST be exactly identical to unforced model prediction
+    eddy_unforced = output_unforced["diagnostic_main"] - zm_unforced
+    eddy_nudged = output_nudged["diagnostic_main"] - actual_zm
+    torch.testing.assert_close(eddy_nudged, eddy_unforced)
+
+    # 3. Increment applied across all longitudes must be purely a function of latitude
+    delta = output_nudged["diagnostic_main"] - output_unforced["diagnostic_main"]
+    delta_std_lon = delta.std(dim=-1)
+    torch.testing.assert_close(delta_std_lon, torch.zeros_like(delta_std_lon), atol=1e-6, rtol=1e-6)
+
+
